@@ -31,6 +31,9 @@ def _get_authorization_code():
     )
 
     # TODO: add error management
+    if not res.json().get("isok", True):
+        print(f"Error on login: {res.json()}")
+
     return res.json()["data"]["code"]
 
 
