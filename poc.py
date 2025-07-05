@@ -57,12 +57,15 @@ def create_table(database_cursor):
         """
         CREATE TABLE IF NOT EXISTS logs(
             timestamp_utc INTEGER  NOT NULL PRIMARY KEY,
+            time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            name TEXT  NOT NULL,
             power FLOAT  NOT NULL,
-            overpower BOOL  NOT NULL,
-            temperature FLOAT  NOT NULL,
-            over_temperature BOOL  NOT NULL
+            voltage FLOAT  NOT NULL,
+            pf FLOAT  NOT NULL,
+            reactive FLOAT  NOT NULL,
+            total FLOAT  NOT NULL
         )
-    """
+        """
     )
 
 
@@ -78,17 +81,7 @@ async def main():
     database_cursor = database_connection.cursor()
 
     # Create table
-    database_cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS logs(
-            timestamp_utc INTEGER  NOT NULL PRIMARY KEY,
-            power FLOAT  NOT NULL,
-            overpower BOOL  NOT NULL,
-            temperature FLOAT  NOT NULL,
-            over_temperature BOOL  NOT NULL
-        )
-    """
-    )
+    create_table( database_cursor )
     database_connection.commit()
 
     print("Connecting to websocket")
@@ -96,29 +89,52 @@ async def main():
         print("Connected")
         try:
             async for message in websocket:
-                print(f"Processing message received at {datetime.now(timezone.utc)}")
+                #print(f"Processing message received at {datetime.now(timezone.utc)} {message}")
                 parsed_message = json.loads(message)
-                power = parsed_message["status"]["meters"][0]["power"]
-                timestamp = parsed_message["status"]["meters"][0]["timestamp"]
-                overpower = parsed_message["status"]["meters"][0]["overpower"]
-                temperature = parsed_message["status"]["temperature"]
-                over_temperature = parsed_message["status"]["overtemperature"]
 
-                # Insert in database
-                database_cursor.execute(
-                    """
-                    INSERT INTO logs(
-                        timestamp_utc,
-                        power,
-                        overpower,
-                        temperature,
-                        over_temperature
-                    )
-                    VALUES(?, ?, ?, ?, ?)
-                """,
-                    (timestamp, power, overpower, temperature, over_temperature),
-                )
-                database_connection.commit()
+                if 'metadata' not in parsed_message or  'status' not in parsed_message:
+                    print("No valid message, skipping...")
+                    continue
+                
+                for idx, metadata in enumerate(parsed_message['metadata']):
+                    if 'purpose' not in metadata:
+                        print( f"No purpose found in {message}" )
+                        break
+                    
+                    if metadata['purpose'] == 'emeter':         
+                        try:
+                            name = str(metadata['name']).strip()
+                            power = parsed_message['status']['emeters'][idx]["power"]
+                            reactive = parsed_message['status']['emeters'][idx]["reactive"]
+                            pf = parsed_message['status']['emeters'][idx]["pf"]
+                            voltage = parsed_message['status']['emeters'][idx]["voltage"]
+                            total = parsed_message['status']['emeters'][idx]["total"]
+                        except:
+                            print(f"Error parsing message: {parsed_message}, skipping...")
+                            continue
+                        timestamp = datetime.now(timezone.utc)
+                        print( f"{timestamp}, Name: {name}, Power: {power}, Reactive: {reactive}, pf: {pf}, Voltage: {voltage}, Total: {total}" )
+                        # Insert in database
+
+                        try:
+                            database_cursor.execute(
+                            """
+                                INSERT INTO logs( timestamp_utc, time, name, power, voltage, pf, reactive, total )
+                                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                                ( int(timestamp.strftime('%Y%m%d%H%M%S')), 
+                                  timestamp, 
+                                  name, 
+                                  power, 
+                                  voltage, 
+                                  pf, 
+                                  reactive, 
+                                  total
+                                ),
+                            )
+                            database_connection.commit()
+                        except:
+                            continue
 
         except websockets.ConnectionClosed as err:
             print(f"Error on websocket: {err}, reconnecting...")
